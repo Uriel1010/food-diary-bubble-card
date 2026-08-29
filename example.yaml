@@ -1,0 +1,12 @@
+type: custom:food-diary-bubble-card
+density: compact
+entity: sensor.food_diary_today_total_calories
+tap_action:
+  action: more-info
+calories_goal_min: 2000
+calories_goal_max: 2400
+goals:
+  protein: 120
+  carbs: 250
+  fat: 80
+  fiber: 30
