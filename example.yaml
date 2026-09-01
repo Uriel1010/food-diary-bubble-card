@@ -10,3 +10,11 @@ goals:
   carbs: 250
   fat: 80
   fiber: 30
+# Optional: override entities and goals per signed-in Home Assistant user.
+# users:
+#   home_assistant_user_id:
+#     calories_goal_max: sensor.my_calorie_goal
+#     goals:
+#       protein: sensor.my_protein_goal
+#     entities:
+#       calories: sensor.my_today_calories
