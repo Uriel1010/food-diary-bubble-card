@@ -85,19 +85,44 @@ class FoodDiaryBubbleCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this.render();
+    const configText = JSON.stringify(this.config || {});
+    const entityIds = [...new Set(configText.match(/\b[a-z_]+\.[a-z0-9_]+\b/g) || [])];
+    const signature = JSON.stringify([
+      hass?.user?.id,
+      ...entityIds.map((entityId) => {
+        const entity = hass?.states?.[entityId];
+        return [entityId, entity?.state, entity?.last_changed];
+      }),
+    ]);
+    if (signature !== this._stateSignature) {
+      this._stateSignature = signature;
+      this.render();
+    }
   }
 
   getCardSize() {
-    if (this.config?.density === "compact") return 3;
+    if (this.activeConfig()?.density === "compact" && !this._expanded) return 3;
     return 4;
+  }
+
+  activeConfig() {
+    const userId = this._hass?.user?.id;
+    const userConfig = userId ? this.config?.users?.[userId] : null;
+    if (!userConfig) return this.config;
+    return {
+      ...this.config,
+      ...userConfig,
+      goals: { ...(this.config.goals || {}), ...(userConfig.goals || {}) },
+      entities: { ...(this.config.entities || {}), ...(userConfig.entities || {}) },
+    };
   }
 
   render() {
     if (!this.shadowRoot || !this.config || !this._hass) return;
 
-    const e = this.config.entities;
-    const goals = this.config.goals;
+    const config = this.activeConfig();
+    const e = config.entities;
+    const goals = { ...config.goals };
     const calories = this.num(e.calories);
     const protein = this.num(e.protein);
     const carbs = this.num(e.carbs);
@@ -111,12 +136,16 @@ class FoodDiaryBubbleCard extends HTMLElement {
     const latestTitle = this.state(e.latestTitle);
     const latestCalories = this.num(e.latestCalories);
     const latestTimestamp = this.state(e.latestTimestamp);
-    const goalMin = Number(this.config.calories_goal_min) || 2000;
-    const goalMax = Number(this.config.calories_goal_max) || 2400;
+    const goalMin = this.goal(config.calories_goal_min, 2000);
+    const goalMax = this.goal(config.calories_goal_max, 2400);
+    goals.protein = this.goal(goals.protein, 120);
+    goals.carbs = this.goal(goals.carbs, 250);
+    goals.fat = this.goal(goals.fat, 80);
+    goals.fiber = this.goal(goals.fiber, 30);
     const kcalPct = this.percent(calories, goalMax);
     const status = this.calorieStatus(calories, goalMin, goalMax);
     const available = Number.isFinite(calories);
-    const compact = this.config.density === "compact";
+    const compact = config.density === "compact" && !this._expanded;
 
     this.shadowRoot.innerHTML = `
       <style>${this.styles()}</style>
@@ -157,9 +186,14 @@ class FoodDiaryBubbleCard extends HTMLElement {
                 <div class="subtitle">${this.mealCountText(mealCount)}</div>
               </div>
             </div>
-            <div class="chip" role="button" tabindex="0" data-more-info-entity="${this.escapeAttribute(e.streak)}" aria-label="Open streak details">
-              <ha-icon icon="mdi:calendar-star"></ha-icon>
-              <span>${this.streakText(streak)}</span>
+            <div class="header-actions">
+              <div class="chip" role="button" tabindex="0" data-more-info-entity="${this.escapeAttribute(e.streak)}" aria-label="Open streak details">
+                <ha-icon icon="mdi:calendar-star"></ha-icon>
+                <span>${this.streakText(streak)}</span>
+              </div>
+              <button class="expand-button" type="button" data-expand-button aria-label="Close Food Diary details">
+                <span>סגור</span><ha-icon icon="mdi:chevron-up"></ha-icon>
+              </button>
             </div>
           </header>
 
@@ -200,6 +234,13 @@ class FoodDiaryBubbleCard extends HTMLElement {
     `;
 
     const card = this.shadowRoot.querySelector("ha-card");
+    this.shadowRoot.querySelector("[data-expand-button]")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this._expanded = !this._expanded;
+      this.render();
+      this.dispatchEvent(new CustomEvent("iron-resize", { bubbles: true, composed: true }));
+    });
     card?.addEventListener("click", (event) => this.handleAction(event));
     card?.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -226,7 +267,12 @@ class FoodDiaryBubbleCard extends HTMLElement {
           <ha-icon icon="mdi:food"></ha-icon>
           <span>יומן אכילה</span>
         </div>
-        <div class="compact-meals" role="button" tabindex="0" data-more-info-entity="${this.escapeAttribute(entities.mealCount)}" aria-label="Open meal count details">${this.mealCountText(mealCount)}</div>
+        <div class="compact-actions">
+          <div class="compact-meals" role="button" tabindex="0" data-more-info-entity="${this.escapeAttribute(entities.mealCount)}" aria-label="Open meal count details">${this.mealCountText(mealCount)}</div>
+          <button class="expand-button" type="button" data-expand-button aria-label="Open Food Diary details">
+            <span>פרטים</span><ha-icon icon="mdi:chevron-down"></ha-icon>
+          </button>
+        </div>
       </header>
 
       <section class="compact-calories" role="button" tabindex="0" data-more-info-entity="${this.escapeAttribute(entities.calories)}" aria-label="Open calories details">
@@ -269,7 +315,8 @@ class FoodDiaryBubbleCard extends HTMLElement {
   }
 
   handleAction(event) {
-    const action = this.config?.tap_action?.action || "more-info";
+    const moreInfoTarget = event?.target?.closest?.("[data-more-info-entity]");
+    const action = this.activeConfig()?.tap_action?.action || "more-info";
     if (action === "none") return;
     if (action !== "more-info") return;
 
@@ -286,12 +333,13 @@ class FoodDiaryBubbleCard extends HTMLElement {
   }
 
   moreInfoEntity(event) {
+    const config = this.activeConfig();
     const targetEntity = event?.target?.closest?.("[data-more-info-entity]")?.dataset?.moreInfoEntity;
     return (
       targetEntity ||
-      this.config?.tap_action?.entity ||
-      this.config?.entity ||
-      this.config?.entities?.calories ||
+      config?.tap_action?.entity ||
+      config?.entity ||
+      config?.entities?.calories ||
       "sensor.food_diary_today_total_calories"
     );
   }
@@ -317,6 +365,15 @@ class FoodDiaryBubbleCard extends HTMLElement {
     return Number.isFinite(value) ? value : NaN;
   }
 
+  goal(value, fallback) {
+    if (typeof value === "string" && value.includes(".")) {
+      const entityValue = this.num(value);
+      return Number.isFinite(entityValue) && entityValue > 0 ? entityValue : fallback;
+    }
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : fallback;
+  }
+
   percent(value, goal) {
     if (!Number.isFinite(value) || !Number.isFinite(goal) || goal <= 0) return 0;
     return Math.max(0, Math.min((value / goal) * 100, 100));
@@ -329,11 +386,14 @@ class FoodDiaryBubbleCard extends HTMLElement {
     if (value < min) {
       return {
         className: value < min * 0.55 ? "low" : "warn",
-        text: `נותרו ${this.formatNumber(min - value, 0)} kcal לטווח`,
+        text: `נותרו ${this.formatNumber(max - value, 0)} kcal ליעד`,
       };
     }
-    if (value <= max) {
-      return { className: "good", text: "בתוך הטווח היומי" };
+    if (value < max) {
+      return { className: "good", text: `נותרו ${this.formatNumber(max - value, 0)} kcal ליעד` };
+    }
+    if (value === max) {
+      return { className: "good", text: "היעד היומי הושלם" };
     }
     return {
       className: "over",
@@ -343,8 +403,8 @@ class FoodDiaryBubbleCard extends HTMLElement {
 
   compactCalorieStatus(value, min, max) {
     if (!Number.isFinite(value)) return "נתונים לא זמינים";
-    if (value < min) return `נותרו ${this.formatNumber(min - value, 0)} קל׳`;
-    if (value <= max) return "בתוך הטווח";
+    if (value < max) return `נותרו ${this.formatNumber(max - value, 0)} קל׳`;
+    if (value === max) return "היעד הושלם";
     return `מעל ב-${this.formatNumber(value - max, 0)} קל׳`;
   }
 
@@ -543,6 +603,49 @@ class FoodDiaryBubbleCard extends HTMLElement {
       .compact-title ha-icon {
         --mdc-icon-size: 17px;
         color: rgba(255, 255, 255, 0.82);
+      }
+
+      .expand-icon {
+        --mdc-icon-size: 18px;
+        color: var(--fd-muted, rgba(255, 255, 255, 0.62));
+        opacity: 0.82;
+      }
+
+      .compact-actions,
+      .header-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .expand-button {
+        appearance: none;
+        min-height: 28px;
+        padding: 4px 9px;
+        border: 1px solid rgba(134, 239, 172, 0.22);
+        border-radius: 999px;
+        background: rgba(34, 197, 94, 0.13);
+        color: #a7f3d0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 750;
+        line-height: 1;
+        white-space: nowrap;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .expand-button ha-icon {
+        --mdc-icon-size: 16px;
+      }
+
+      .expand-button:active {
+        transform: scale(0.96);
       }
 
       .compact-meals {

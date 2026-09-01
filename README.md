@@ -11,6 +11,10 @@ The card is built for Food Diary dashboards that expose daily nutrition sensors.
 - Expanded and compact density modes
 - Compact calorie progress bar
 - Compact partial-arc gauges for protein, carbs, fat, and fiber
+- Expand/collapse control in compact mode
+- Per-Home-Assistant-user entities, targets, and layout
+- Targets can be fixed numbers or Home Assistant sensor entities
+- Efficient state-based rendering for smoother mobile dashboards
 - Section-level `more-info` actions
 - Home Assistant visual editor support through `ha-form`
 - YAML configuration support
@@ -69,6 +73,49 @@ goals:
   carbs: 250
   fat: 80
   fiber: 30
+```
+
+## Per-user configuration
+
+Use the Home Assistant user ID as the key under `users`. The card automatically
+selects the matching entities and targets for the signed-in user, so a single
+card can serve multiple users without leaving hidden-card gaps in the dashboard.
+
+```yaml
+type: custom:food-diary-bubble-card
+density: compact
+users:
+  your_home_assistant_user_id:
+    calories_goal_min: 1800
+    calories_goal_max: 2000
+    goals:
+      protein: 140
+      carbs: 250
+      fat: 75
+      fiber: 30
+    entities:
+      calories: sensor.healthconnect_nutrition_calories
+      protein: sensor.healthconnect_nutrition_protein
+      carbs: sensor.healthconnect_nutrition_carbs
+      fat: sensor.healthconnect_nutrition_fat
+      fiber: sensor.healthconnect_nutrition_fiber
+      mealCount: sensor.healthconnect_nutrition_meal_count
+```
+
+Any value omitted from a user block falls back to the top-level configuration.
+
+## Dynamic targets
+
+Calorie and macro targets may reference numeric sensor entities instead of fixed
+values. This lets the card follow targets managed by your integration:
+
+```yaml
+calories_goal_max: sensor.healthconnect_nutrition_calories_goal
+goals:
+  protein: sensor.healthconnect_nutrition_protein_goal
+  carbs: sensor.healthconnect_nutrition_carbs_goal
+  fat: sensor.healthconnect_nutrition_fat_goal
+  fiber: sensor.healthconnect_nutrition_fiber_goal
 ```
 
 ## Compact Mode
